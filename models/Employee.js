@@ -1,3 +1,4 @@
+// models/Employee.js
 import mongoose from 'mongoose';
 
 const EmployeeSchema = new mongoose.Schema({
@@ -21,6 +22,10 @@ const EmployeeSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
+  },
+  isActive: {
+    type: Boolean,
+    default: true
   },
   createdAt: {
     type: Date,
