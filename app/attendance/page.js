@@ -1,41 +1,90 @@
-// app/attendance/page.js
 'use client';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
-import { LogIn, LogOut, Clock, Calendar, Users, Filter } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Label } from '../../components/ui/label';
+import { 
+  LogIn, 
+  LogOut, 
+  Clock, 
+  Calendar, 
+  Phone,
+  RefreshCw,
+  MapPin,
+  AlertCircle
+} from 'lucide-react';
 
-export default function AttendancePage() {
+const toNepaliTime = (dateString, options = {}) => {
+  if (!dateString) return 'N/A';
+  
+  try {
+    if (typeof dateString === 'string' && (dateString.includes('AM') || dateString.includes('PM'))) {
+      return dateString;
+    }
+    
+    return new Date(dateString).toLocaleString('en-NP', { 
+      timeZone: 'Asia/Kathmandu',
+      ...options
+    });
+  } catch (error) {
+    console.error('Error converting time:', error);
+    return 'Invalid Date';
+  }
+};
+
+export default function EmployeeAttendance() {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [todayAttendance, setTodayAttendance] = useState(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
-  const [activeTab, setActiveTab] = useState('mark'); // 'mark' or 'view'
-  const [attendanceData, setAttendanceData] = useState({ employees: [], dates: [] });
-  const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
-  const [loadingReport, setLoadingReport] = useState(false);
 
-  // Check today's attendance status
-  const checkTodayStatus = async () => {
-    if (!phone) return;
+  const checkTodayStatus = async (forceRefresh = false) => {
+    if (!phone || phone.length < 10) {
+      setTodayAttendance(null);
+      return;
+    }
     
     setCheckingStatus(true);
+    setError('');
+    
     try {
-      const response = await fetch(`/api/attendance?date=${new Date().toISOString().split('T')[0]}`);
-      const allAttendance = await response.json();
+      const today = new Date().toISOString().split('T')[0];
+      const timestamp = forceRefresh ? `&t=${Date.now()}` : '';
+      const response = await fetch(`/api/attendance?date=${today}&phone=${phone}${timestamp}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
       
-      // Find today's attendance for this phone
-      const todayRecord = allAttendance.find(record => 
-        record.employeeId?.phone === phone
-      );
+      if (!response.ok) {
+        throw new Error('Failed to fetch attendance data');
+      }
+      
+      const attendanceData = await response.json();
+      
+      console.log('📊 Fetched attendance data:', attendanceData);
+      
+      const todayRecord = Array.isArray(attendanceData) && attendanceData.length > 0 
+        ? attendanceData[0] 
+        : null;
+      
+      console.log('📅 Today record:', {
+        found: !!todayRecord,
+        hasCheckIn: !!todayRecord?.checkIn,
+        hasCheckOut: !!todayRecord?.checkOut,
+        checkInTime: todayRecord?.checkIn?.time,
+        checkOutTime: todayRecord?.checkOut?.time
+      });
       
       setTodayAttendance(todayRecord);
     } catch (error) {
-      console.error('Error checking status:', error);
+      console.error('❌ Error checking status:', error);
+      setTodayAttendance(null);
     } finally {
       setCheckingStatus(false);
     }
@@ -43,38 +92,25 @@ export default function AttendancePage() {
 
   useEffect(() => {
     if (phone.length >= 10) {
-      checkTodayStatus();
+      const debounceTimer = setTimeout(() => {
+        checkTodayStatus();
+      }, 500);
+      
+      return () => clearTimeout(debounceTimer);
     } else {
       setTodayAttendance(null);
     }
   }, [phone]);
 
-  // Load attendance report
-  const loadAttendanceReport = async () => {
-    setLoadingReport(true);
-    try {
-      const response = await fetch(`/api/attendance/report?startDate=${filterDate}&endDate=${filterDate}`);
-      const data = await response.json();
-      setAttendanceData(data);
-    } catch (error) {
-      console.error('Error loading report:', error);
-    } finally {
-      setLoadingReport(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'view') {
-      loadAttendanceReport();
-    }
-  }, [activeTab, filterDate]);
-
   const handleAttendance = async (action) => {
+    console.log(`\n🚀 Starting ${action} process...`);
     setLoading(true);
     setMessage('');
     setError('');
 
     try {
+      // Get current location
+      console.log('📍 Getting current location...');
       const position = await new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
@@ -84,7 +120,11 @@ export default function AttendancePage() {
       });
 
       const { latitude, longitude } = position.coords;
+      console.log('✓ Location obtained:', { latitude, longitude });
 
+      console.log(`📤 Sending ${action} request to API...`);
+      
+      // Make API call
       const response = await fetch('/api/attendance', {
         method: 'POST',
         headers: {
@@ -99,282 +139,275 @@ export default function AttendancePage() {
       });
 
       const data = await response.json();
+      console.log('📥 API Response:', {
+        status: response.status,
+        ok: response.ok,
+        data
+      });
 
       if (response.ok) {
-        const employeeName = data.attendance.employeeId.name;
+        const employeeName = data.attendance?.employeeId?.name || 'Employee';
+        
         if (action === 'check-in') {
           setMessage(`✓ Checked in successfully, ${employeeName}!`);
         } else {
           setMessage(`✓ Checked out successfully, ${employeeName}! Total hours: ${data.totalHours}h`);
         }
-        setTodayAttendance(data.attendance);
-        // Refresh report if on view tab
-        if (activeTab === 'view') {
-          loadAttendanceReport();
-        }
+        
+        console.log('✓ Success! Updating local state...');
+        
+        // CRITICAL: Clear the old state first to force a fresh render
+        setTodayAttendance(null);
+        
+        // Wait a bit before setting new state
+        setTimeout(() => {
+          setTodayAttendance(data.attendance);
+          console.log('✓ Local state updated:', {
+            hasCheckIn: !!data.attendance?.checkIn,
+            hasCheckOut: !!data.attendance?.checkOut
+          });
+        }, 100);
+        
+        // Force refresh from server after a short delay
+        setTimeout(() => {
+          console.log('🔄 Force refreshing from server...');
+          checkTodayStatus(true);
+        }, 1000);
+        
+        // Clear message after 5 seconds
+        setTimeout(() => setMessage(''), 5000);
       } else {
+        console.error('❌ Request failed:', data.error);
         setError(data.error || `Failed to ${action}`);
+        
+        // Still refresh to sync state
+        setTimeout(() => {
+          checkTodayStatus(true);
+        }, 500);
       }
     } catch (error) {
-      if (error.code === error.PERMISSION_DENIED) {
-        setError('Location access is required to mark attendance');
-      } else if (error.code === error.TIMEOUT) {
-        setError('Location request timed out');
+      console.error('❌ Attendance error:', error);
+      
+      if (error.code === 1) {
+        setError('Location access is required. Please enable location services.');
+      } else if (error.code === 3) {
+        setError('Location request timed out. Please try again.');
+      } else if (error.code === 2) {
+        setError('Location information is unavailable. Please check your device settings.');
       } else {
-        setError('Failed to get location: ' + error.message);
+        setError('Failed to mark attendance: ' + error.message);
       }
+      
+      setTimeout(() => {
+        checkTodayStatus(true);
+      }, 500);
     } finally {
       setLoading(false);
+      console.log(`✓ ${action} process completed\n`);
     }
   };
 
-  const canCheckIn = !todayAttendance;
-  const canCheckOut = todayAttendance && !todayAttendance.checkOut;
-
-  // Calculate statistics
-  const presentCount = attendanceData.employees.filter(emp => 
-    Array.from(emp.attendance.values()).some(att => att.status === 'present')
-  ).length;
-
-  const absentCount = attendanceData.employees.length - presentCount;
+  const hasCheckedIn = todayAttendance?.checkIn !== null && todayAttendance?.checkIn !== undefined;
+  const hasCheckedOut = todayAttendance?.checkOut !== null && todayAttendance?.checkOut !== undefined;
+  
+  console.log('🔘 Button state:', { 
+    hasCheckedIn, 
+    hasCheckedOut,
+    checkInExists: hasCheckedIn ? 'YES' : 'NO',
+    checkOutExists: hasCheckedOut ? 'YES' : 'NO',
+    todayAttendance: todayAttendance ? 'EXISTS' : 'NULL'
+  });
+  
+  const canCheckIn = !hasCheckedIn;
+  const canCheckOut = hasCheckedIn && !hasCheckedOut;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-100 p-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
+      <div className="max-w-md mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2 flex items-center justify-center gap-3">
             <Clock className="w-8 h-8" />
             Attendance System
           </h1>
-          <p className="text-gray-600">Manage employee attendance with real-time tracking</p>
+          <p className="text-gray-600">Mark your daily attendance</p>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex gap-2 mb-6 bg-white rounded-lg p-1 shadow-sm w-fit mx-auto">
-          <Button
-            variant={activeTab === 'mark' ? 'default' : 'ghost'}
-            onClick={() => setActiveTab('mark')}
-            className={`px-6 ${activeTab === 'mark' ? 'bg-blue-600 text-white' : ''}`}
-          >
-            <LogIn className="w-4 h-4 mr-2" />
-            Mark Attendance
-          </Button>
-          <Button
-            variant={activeTab === 'view' ? 'default' : 'ghost'}
-            onClick={() => setActiveTab('view')}
-            className={`px-6 ${activeTab === 'view' ? 'bg-green-600 text-white' : ''}`}
-          >
-            <Users className="w-4 h-4 mr-2" />
-            View Records
-          </Button>
-        </div>
+        <Card className="w-full shadow-lg">
+          <CardHeader className="bg-blue-50 border-b">
+            <CardTitle className="text-center flex items-center justify-center gap-2 text-blue-800">
+              <LogIn className="w-5 h-5" />
+              Mark Your Attendance
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="phone" className="flex items-center gap-2 mb-2 text-gray-700">
+                  <Phone className="w-4 h-4" />
+                  Phone Number
+                </Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Enter your registered phone number"
+                  required
+                  disabled={loading}
+                  className="w-full"
+                  maxLength={10}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Enter your 10-digit phone number
+                </p>
+              </div>
 
-        {/* Mark Attendance Tab */}
-        {activeTab === 'mark' && (
-          <Card className="w-full max-w-md mx-auto">
-            <CardHeader>
-              <CardTitle className="text-center">Mark Your Attendance</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="phone">Phone Number</Label>
-                  <Input
-                    id="phone"
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="Enter your phone number"
-                    required
-                    disabled={loading}
-                  />
+              {checkingStatus && (
+                <div className="p-3 bg-gray-100 rounded-md text-sm text-center flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Checking today's status...
                 </div>
+              )}
 
-                {/* Status Display */}
-                {checkingStatus && (
-                  <div className="p-3 bg-gray-100 rounded-md text-sm text-center">
-                    Checking status...
-                  </div>
-                )}
-
-                {todayAttendance && (
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-md space-y-2">
-                    <h3 className="font-semibold text-blue-900">Today's Status</h3>
-                    <div className="text-sm space-y-1">
+              {todayAttendance && (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-md space-y-2">
+                  <h3 className="font-semibold text-blue-900 flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    Today's Status
+                  </h3>
+                  <div className="text-sm space-y-2">
+                    {hasCheckedIn ? (
                       <p className="flex items-center gap-2">
                         <LogIn className="w-4 h-4 text-green-600" />
-                        <span>Check In: {todayAttendance.checkIn?.time || 'Not checked in'}</span>
+                        <span>
+                          <strong>Check In:</strong> {todayAttendance.checkIn?.time || 'Unknown time'}
+                        </span>
                       </p>
-                      {todayAttendance.checkOut && (
-                        <>
-                          <p className="flex items-center gap-2">
-                            <LogOut className="w-4 h-4 text-red-600" />
-                            <span>Check Out: {todayAttendance.checkOut.time}</span>
-                          </p>
-                          <p className="flex items-center gap-2">
-                            <Clock className="w-4 h-4 text-blue-600" />
-                            <span className="font-semibold">Total: {todayAttendance.totalHours}h</span>
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="grid grid-cols-2 gap-3">
-                  <Button 
-                    onClick={() => handleAttendance('check-in')}
-                    className="w-full bg-green-600 hover:bg-green-700"
-                    disabled={loading || !canCheckIn || !phone}
-                  >
-                    <LogIn className="w-4 h-4 mr-2" />
-                    {loading ? 'Processing...' : 'Check In'}
-                  </Button>
-
-                  <Button 
-                    onClick={() => handleAttendance('check-out')}
-                    className="w-full bg-red-600 hover:bg-red-700"
-                    disabled={loading || !canCheckOut || !phone}
-                  >
-                    <LogOut className="w-4 h-4 mr-2" />
-                    {loading ? 'Processing...' : 'Check Out'}
-                  </Button>
-                </div>
-
-                {/* Messages */}
-                {message && (
-                  <div className="p-3 bg-green-100 text-green-800 rounded-md text-sm">
-                    {message}
-                  </div>
-                )}
-
-                {error && (
-                  <div className="p-3 bg-red-100 text-red-800 rounded-md text-sm">
-                    {error}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* View Records Tab */}
-        {activeTab === 'view' && (
-          <div className="space-y-6">
-            {/* Filters and Stats */}
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-gray-600" />
-                      <Label htmlFor="date">Select Date</Label>
-                    </div>
-                    <Input
-                      id="date"
-                      type="date"
-                      value={filterDate}
-                      onChange={(e) => setFilterDate(e.target.value)}
-                      className="w-40"
-                    />
-                    <Button onClick={loadAttendanceReport} disabled={loadingReport}>
-                      <Filter className="w-4 h-4 mr-2" />
-                      {loadingReport ? 'Loading...' : 'Filter'}
-                    </Button>
-                  </div>
-                  
-                  <div className="flex gap-4 text-sm">
-                    <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full">
-                      <Users className="w-4 h-4 inline mr-1" />
-                      Present: {presentCount}
-                    </div>
-                    <div className="bg-red-100 text-red-800 px-3 py-1 rounded-full">
-                      <Users className="w-4 h-4 inline mr-1" />
-                      Absent: {absentCount}
-                    </div>
-                    <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
-                      <Users className="w-4 h-4 inline mr-1" />
-                      Total: {attendanceData.employees.length}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Attendance Table */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Attendance Records - {new Date(filterDate).toLocaleDateString()}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {loadingReport ? (
-                  <div className="text-center py-8">Loading attendance data...</div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse border border-gray-200">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Employee</th>
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Department</th>
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Role</th>
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Check In</th>
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Check Out</th>
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Total Hours</th>
-                          <th className="border border-gray-200 px-4 py-3 text-left font-semibold">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {attendanceData.employees.map((item, index) => {
-                          const attendance = item.attendance.get(filterDate) || {
-                            checkIn: '-',
-                            checkOut: '-',
-                            totalHours: 0,
-                            status: 'absent'
-                          };
-                          
-                          return (
-                            <tr key={item.employee._id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                              <td className="border border-gray-200 px-4 py-3">
-                                <div>
-                                  <div className="font-medium">{item.employee.name}</div>
-                                  <div className="text-sm text-gray-600">{item.employee.phone}</div>
-                                </div>
-                              </td>
-                              <td className="border border-gray-200 px-4 py-3">{item.employee.department}</td>
-                              <td className="border border-gray-200 px-4 py-3">{item.employee.role}</td>
-                              <td className="border border-gray-200 px-4 py-3">{attendance.checkIn}</td>
-                              <td className="border border-gray-200 px-4 py-3">{attendance.checkOut}</td>
-                              <td className="border border-gray-200 px-4 py-3">
-                                {attendance.totalHours > 0 ? `${attendance.totalHours}h` : '-'}
-                              </td>
-                              <td className="border border-gray-200 px-4 py-3">
-                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                  attendance.status === 'present' 
-                                    ? 'bg-green-100 text-green-800'
-                                    : 'bg-red-100 text-red-800'
-                                }`}>
-                                  {attendance.status === 'present' ? 'Present' : 'Absent'}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                    ) : (
+                      <p className="text-gray-600">Not checked in yet</p>
+                    )}
                     
-                    {attendanceData.employees.length === 0 && (
-                      <div className="text-center py-8 text-gray-500">
-                        No attendance records found for the selected date.
-                      </div>
+                    {hasCheckedOut ? (
+                      <>
+                        <p className="flex items-center gap-2">
+                          <LogOut className="w-4 h-4 text-red-600" />
+                          <span>
+                            <strong>Check Out:</strong> {todayAttendance.checkOut?.time}
+                          </span>
+                        </p>
+                        <p className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-blue-600" />
+                          <span className="font-semibold">
+                            Total Hours: {todayAttendance.totalHours}h
+                          </span>
+                        </p>
+                      </>
+                    ) : hasCheckedIn && (
+                      <p className="text-green-600 text-sm flex items-center gap-1">
+                        <MapPin className="w-3 h-3" />
+                        ✓ Checked in. You can check out when leaving.
+                      </p>
                     )}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
+                </div>
+              )}
+
+              {phone.length >= 10 && !checkingStatus && todayAttendance && (
+                <div className="text-xs bg-yellow-50 border border-yellow-200 p-3 rounded flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-yellow-800">
+                    <strong>Debug Info:</strong><br />
+                    CheckIn: {hasCheckedIn ? '✓ YES' : '✗ NO'} | 
+                    CheckOut: {hasCheckedOut ? '✓ YES' : '✗ NO'}<br />
+                    Record ID: {todayAttendance._id || 'N/A'}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <Button 
+                  onClick={() => handleAttendance('check-in')}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={loading || !phone || phone.length < 10 || !canCheckIn}
+                >
+                  {loading ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <LogIn className="w-4 h-4 mr-2" />
+                  )}
+                  {loading ? 'Processing...' : 'Check In'}
+                </Button>
+
+                <Button 
+                  onClick={() => handleAttendance('check-out')}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={loading || !phone || phone.length < 10 || !canCheckOut}
+                >
+                  {loading ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <LogOut className="w-4 h-4 mr-2" />
+                  )}
+                  {loading ? 'Processing...' : 'Check Out'}
+                </Button>
+              </div>
+
+              {phone.length >= 10 && !checkingStatus && (
+                <div className="text-xs text-center text-gray-600 bg-gray-50 p-2 rounded">
+                  {hasCheckedOut ? (
+                    <span className="text-purple-600">✓ You've completed attendance for today</span>
+                  ) : hasCheckedIn ? (
+                    <span className="text-green-600">✓ Checked in - You can now check out</span>
+                  ) : (
+                    <span className="text-blue-600">Ready to check in</span>
+                  )}
+                </div>
+              )}
+
+              {phone.length >= 10 && (
+                <Button 
+                  onClick={() => checkTodayStatus(true)}
+                  variant="outline"
+                  className="w-full"
+                  disabled={checkingStatus}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${checkingStatus ? 'animate-spin' : ''}`} />
+                  Refresh Status
+                </Button>
+              )}
+
+              <div className="text-xs text-gray-500 space-y-1 p-3 bg-gray-50 rounded-md">
+                <p className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  Ensure location services are enabled
+                </p>
+                <p>• You must be within 100m of office to mark attendance</p>
+                <p>• Check in when arriving, check out when leaving</p>
+              </div>
+
+              {message && (
+                <div className="p-3 bg-green-100 text-green-800 rounded-md text-sm border border-green-200">
+                  {message}
+                </div>
+              )}
+
+              {error && (
+                <div className="p-3 bg-red-100 text-red-800 rounded-md text-sm border border-red-200">
+                  {error}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="text-center mt-6 p-3 bg-white rounded-lg shadow-sm">
+          <p className="text-sm text-gray-600">
+            Current Nepal Time: {toNepaliTime(new Date().toISOString(), { 
+              dateStyle: 'medium', 
+              timeStyle: 'medium' 
+            })}
+          </p>
+        </div>
       </div>
     </div>
   );
