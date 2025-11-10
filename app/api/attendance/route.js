@@ -4,6 +4,23 @@ import Attendance from '../../../models/Attendance';
 import Employee from '../../../models/Employee';
 import { calculateDistance, OFFICE_LOCATION } from '../../../lib/utils';
 
+// Utility: Get Nepali Date and Time
+function getNepaliDateTime() {
+  const now = new Date();
+  // Convert to Nepali time (UTC + 5 hours 45 minutes)
+  const nepaliTime = new Date(now.getTime() + (5 * 60 + 45) * 60000);
+  
+  const date = nepaliTime.toISOString().split('T')[0]; // yyyy-mm-dd
+  const time = nepaliTime.toLocaleTimeString('en-US', { 
+    hour12: true, 
+    hour: '2-digit', 
+    minute: '2-digit', 
+    second: '2-digit' 
+  });
+
+  return { date, time, full: nepaliTime };
+}
+
 export async function GET() {
   try {
     await dbConnect();
@@ -22,7 +39,6 @@ export async function POST(request) {
     const body = await request.json();
     const { phone, lat, lng } = body;
 
-    // Find employee by phone
     const employee = await Employee.findOne({ phone });
     if (!employee) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
@@ -57,11 +73,14 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Attendance already marked for today' }, { status: 400 });
     }
 
+    // Get Nepali date and time
+    const { date, time, full } = getNepaliDateTime();
+
     // Create attendance record
     const attendance = await Attendance.create({
       employeeId: employee._id,
-      date: new Date(),
-      time: new Date().toLocaleTimeString(),
+      date: full, // store full Date object in Nepali time
+      time,
       location: {
         lat,
         lng,
